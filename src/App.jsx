@@ -12,6 +12,7 @@ import CreatePost from './pages/CreatePost';
 import PostDetail from './pages/PostDetail';
 import UserProfile from './pages/UserProfile';
 import EditProfile from './pages/EditProfile';
+import Chat from './pages/Chat';
 import './App.css';
 
 // 受保护的路由组件
@@ -81,6 +82,7 @@ function AppRoutes() {
                   <Route path="/post/:postId" element={<PostDetail />} />
                   <Route path="/user/:userId" element={<UserProfile />} />
                   <Route path="/edit-profile" element={<EditProfile />} />
+                  <Route path="/chat/:userId" element={<Chat />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

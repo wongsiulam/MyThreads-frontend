@@ -182,5 +182,12 @@ export const fileAPI = {
   deleteAvatar: (filename) => apiClient.delete(`/files/avatar?filename=${filename}`),
 };
 
+// 消息相关 API
+export const getRecentMessages = () => apiClient.get('/message/recent').then(res => res.data);
+export const getChatMessages = (userId) => apiClient.get(`/message/chat?userId=${userId}`).then(res => res.data);
+export const sendMessage = (data) => apiClient.post('/message/send', data);
+export const deleteMessage = (id) => apiClient.delete(`/message/${id}`);
+export const updateMessageStatus = (id, status) => apiClient.put(`/message/${id}/status?status=${status}`);
+
 export default apiClient;
 
