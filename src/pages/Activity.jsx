@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Heart, MessageCircle, UserPlus } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { userAPI, postAPI, commentAPI, followAPI, getRecentMessages, searchAPI } from '@/services/api';
 
 const Activity = () => {
   const [activities, setActivities] = useState([]);
@@ -15,53 +16,84 @@ const Activity = () => {
     { id: 'verified', label: '已验证' },
   ];
 
-  // 模拟数据
-  const mockActivities = [
-    {
-      id: 1,
-      type: 'like',
-      user: { id: 1, nickname: '张三', avatar: '/default-avatar.png' },
-      post: { id: 1, title: '我的第一个帖子', content: '这是一个测试帖子' },
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: 2,
-      type: 'comment',
-      user: { id: 2, nickname: '李四', avatar: '/default-avatar.png' },
-      post: { id: 1, title: '我的第一个帖子', content: '这是一个测试帖子' },
-      comment: '很棒的分享！',
-      createdAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-    },
-    {
-      id: 3,
-      type: 'follow',
-      user: { id: 3, nickname: '王五', avatar: '/default-avatar.png' },
-      createdAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-    },
-  ];
-
   useEffect(() => {
-    // 模拟 API 调用
-    const fetchActivities = async () => {
+    const fetchAllActivities = async () => {
       setIsLoading(true);
-      // 这里应该调用真实的 API
-      setTimeout(() => {
-        setActivities(mockActivities);
-        setIsLoading(false);
-      }, 1000);
-    };
+      try {
+        // 1. 获取当前用户
+        const userRes = await userAPI.getCurrentUser();
+        const currentUser = userRes.data || userRes;
+        const userId = currentUser.id;
 
-    fetchActivities();
+        // 2. 获取关注我的人（粉丝）
+        const followersRes = await followAPI.getFollowers(userId);
+        const followers = followersRes.data || followersRes;
+        const followerDetails = await Promise.all(
+          followers.map(async (follower) => {
+            if (follower.nickname && follower.avatar) {
+              return { ...follower, id: follower.followerId };
+            } else {
+              const detailRes = await userAPI.getUserById(follower.followerId);
+              return { ...detailRes.data || detailRes, id: follower.followerId };
+            }
+          })
+        );
+        const followActivities = followerDetails.map((follower, idx) => ({
+          id: `follow-${follower.id}`,
+          type: 'follow',
+          user: follower,
+          createdAt: followers[idx].createdAt || followers[idx].followedAt || new Date().toISOString(),
+        }));
+
+        // 3. 搜索当前用户的所有帖子
+        const postsRes = await searchAPI.searchPosts('');
+        const allPosts = postsRes.data || postsRes;
+        const userPosts = allPosts.filter(post => post.userId === userId);
+        const postIds = userPosts.map(post => post.id);
+
+        // 4. 遍历每个postId，获取评论
+        let commentActivities = [];
+        for (const postId of postIds) {
+          const commentsRes = await commentAPI.getPostComments(postId);
+          const comments = Array.isArray(commentsRes.data) ? commentsRes.data : [];
+          const commentDetails = await Promise.all(
+            comments.map(async (comment) => {
+              const detailRes = await userAPI.getUserById(comment.userId);
+              return { ...comment, user: detailRes.data || detailRes };
+            })
+          );
+          commentActivities = commentActivities.concat(
+            commentDetails.map(comment => ({
+              id: `comment-${comment.id}`,
+              type: 'comment',
+              user: comment.user,
+              post: { id: postId, title: userPosts.find(p => p.id === postId)?.title || '', content: userPosts.find(p => p.id === postId)?.content || '' },
+              comment: comment.content,
+              createdAt: comment.createTime,
+            }))
+          );
+        }
+
+        // 5. 合并所有活动，按时间倒序排序
+        const allActivities = [...followActivities, ...commentActivities];
+        allActivities.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        console.log('allActivities', allActivities);
+        setActivities(allActivities);
+      } catch (err) {
+        console.error('fetchAllActivities error:', err);
+        setActivities([]);
+      }
+      setIsLoading(false);
+    };
+    fetchAllActivities();
   }, []);
 
   const getActivityIcon = (type) => {
     switch (type) {
-      case 'like':
-        return <Heart size={16} className="text-red-500 fill-red-500" />;
-      case 'comment':
-        return <MessageCircle size={16} className="text-blue-500" />;
       case 'follow':
         return <UserPlus size={16} className="text-green-500" />;
+      case 'comment':
+        return <MessageCircle size={16} className="text-blue-500" />;
       default:
         return null;
     }
@@ -75,6 +107,8 @@ const Activity = () => {
         return '评论了你的帖子';
       case 'follow':
         return '关注了你';
+      case 'chat':
+        return '发来了一条新消息';
       default:
         return '';
     }
@@ -141,8 +175,8 @@ const Activity = () => {
                   {/* 用户头像 */}
                   <Link to={`/user/${activity.user.id}`} className="flex-shrink-0">
                     <img
-                      src={activity.user.avatar}
-                      alt={activity.user.nickname}
+                      src={activity.user.avatar || '/default-avatar.png'}
+                      alt={activity.user.nickname || '用户头像'}
                       className="w-10 h-10 rounded-full object-cover"
                     />
                   </Link>
@@ -151,44 +185,47 @@ const Activity = () => {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center space-x-2 mb-1">
                       {getActivityIcon(activity.type)}
-                      <span className="font-semibold text-sm">
+                      <Link to={`/user/${activity.user.id}`} className="font-semibold text-sm hover:underline">
                         {activity.user.nickname}
-                      </span>
+                      </Link>
                       <span className="text-sm text-gray-600">
                         {getActivityText(activity)}
                       </span>
+                      {activity.type === 'comment' && activity.post && (
+                        <Link to={`/post/${activity.post.id}`} className="ml-2 text-xs text-blue-500 hover:underline">
+                          {activity.post.title}
+                        </Link>
+                      )}
                     </div>
-
-                    {/* 相关帖子或评论 */}
-                    {activity.post && (
-                      <Link 
-                        to={`/post/${activity.post.id}`}
-                        className="block mt-2 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
-                      >
-                        {activity.post.title && (
-                          <p className="font-medium text-sm mb-1">
-                            {activity.post.title}
-                          </p>
-                        )}
-                        <p className="text-sm text-gray-700 line-clamp-2">
-                          {activity.post.content}
-                        </p>
-                      </Link>
-                    )}
-
-                    {/* 评论内容 */}
-                    {activity.comment && (
-                      <div className="mt-2 p-3 bg-blue-50 rounded-lg">
-                        <p className="text-sm text-gray-700">"{activity.comment}"</p>
-                      </div>
-                    )}
-
                     {/* 时间 */}
                     <p className="text-xs text-gray-500 mt-2">
                       {formatTime(activity.createdAt)}
                     </p>
                   </div>
                 </div>
+                {activity.type === 'comment' && (
+                  <div className="mt-2">
+                    {/* 帖主的帖子内容 */}
+                    <div className="p-3 bg-gray-50 rounded mb-2">
+                      {activity.post.title && (
+                        <div className="font-medium text-sm mb-1">{activity.post.title}</div>
+                      )}
+                      <div className="text-sm text-gray-700 whitespace-pre-line">
+                        {activity.post.content && activity.post.content.length > 60
+                          ? activity.post.content.slice(0, 60) + '...'
+                          : activity.post.content}
+                      </div>
+                    </div>
+                    {/* 评论内容 */}
+                    <div className="p-3 bg-blue-50 rounded">
+                      <p className="text-sm text-gray-700 whitespace-pre-line">
+                        "{activity.comment && activity.comment.length > 40
+                          ? activity.comment.slice(0, 40) + '...'
+                          : activity.comment}"
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
